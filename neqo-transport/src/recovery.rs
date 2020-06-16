@@ -816,8 +816,7 @@ mod tests {
         let est = |sp| {
             lr.spaces
                 .get(sp)
-                .map(LossRecoverySpace::loss_recovery_timer_start)
-                .flatten()
+                .and_then(LossRecoverySpace::loss_recovery_timer_start)
         };
         println!(
             "loss times: {:?} {:?} {:?}",

@@ -422,7 +422,7 @@ impl<'a> HeaderDecoder<'a> {
 #[cfg(test)]
 mod tests {
 
-    use super::{Deref, HeaderDecoder, HeaderDecoderResult, HeaderEncoder, HeaderTable};
+    use super::{HeaderDecoder, HeaderDecoderResult, HeaderEncoder, HeaderTable};
 
     const INDEX_STATIC_TEST: [(u64, &[u8], &str, &str); 4] = [
         (0, &[0x0, 0x0, 0xc0], ":authority", ""),
@@ -656,7 +656,7 @@ mod tests {
             let mut encoded_h = HeaderEncoder::new(66, true, 1000);
             encoded_h.encode_indexed_dynamic(*index);
             encoded_h.fix_header_block_prefix();
-            assert_eq!(&encoded_h.deref(), result);
+            assert_eq!(&&encoded_h[..], result);
         }
     }
 
@@ -666,7 +666,7 @@ mod tests {
             let mut encoded_h = HeaderEncoder::new(0, true, 1000);
             encoded_h.encode_indexed_dynamic(*index);
             encoded_h.fix_header_block_prefix();
-            assert_eq!(&encoded_h.deref(), result);
+            assert_eq!(&&encoded_h[..], result);
         }
     }
 
@@ -676,7 +676,7 @@ mod tests {
             let mut encoded_h = HeaderEncoder::new(0, false, 1000);
             encoded_h.encode_literal_with_name_ref(true, *index, VALUE);
             encoded_h.fix_header_block_prefix();
-            assert_eq!(&encoded_h.deref(), result);
+            assert_eq!(&&encoded_h[..], result);
         }
     }
 
@@ -686,7 +686,7 @@ mod tests {
             let mut encoded_h = HeaderEncoder::new(66, false, 1000);
             encoded_h.encode_literal_with_name_ref(false, *index, VALUE);
             encoded_h.fix_header_block_prefix();
-            assert_eq!(&encoded_h.deref(), result);
+            assert_eq!(&&encoded_h[..], result);
         }
     }
 
@@ -696,7 +696,7 @@ mod tests {
             let mut encoded_h = HeaderEncoder::new(0, false, 1000);
             encoded_h.encode_literal_with_name_ref(false, *index, VALUE);
             encoded_h.fix_header_block_prefix();
-            assert_eq!(&encoded_h.deref(), result);
+            assert_eq!(&&encoded_h[..], result);
         }
     }
 
@@ -706,7 +706,7 @@ mod tests {
             let mut encoded_h = HeaderEncoder::new(66, true, 1000);
             encoded_h.encode_literal_with_name_ref(false, *index, VALUE);
             encoded_h.fix_header_block_prefix();
-            assert_eq!(&encoded_h.deref(), result);
+            assert_eq!(&&encoded_h[..], result);
         }
     }
     #[test]
@@ -714,12 +714,12 @@ mod tests {
         let mut encoded_h = HeaderEncoder::new(66, false, 1000);
         encoded_h.encode_literal_with_name_literal(VALUE, VALUE);
         encoded_h.fix_header_block_prefix();
-        assert_eq!(&encoded_h.deref(), &LITERAL_LITERAL);
+        assert_eq!(&&encoded_h[..], &LITERAL_LITERAL);
 
         let mut encoded_h = HeaderEncoder::new(66, true, 1000);
         encoded_h.encode_literal_with_name_literal(VALUE, VALUE);
         encoded_h.fix_header_block_prefix();
-        assert_eq!(&encoded_h.deref(), &LITERAL_LITERAL_HUFFMAN);
+        assert_eq!(&&encoded_h[..], &LITERAL_LITERAL_HUFFMAN);
     }
 
     #[test]
