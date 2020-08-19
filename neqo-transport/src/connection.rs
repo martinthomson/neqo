@@ -1475,10 +1475,10 @@ impl Connection {
             }
         };
         let mut builder = if pt == PacketType::Short {
-            qdebug!("Building Short dcid {}", path.remote_cid());
+            qtrace!("Building Short dcid {}", path.remote_cid());
             PacketBuilder::short(encoder, tx.key_phase(), path.remote_cid())
         } else {
-            qdebug!(
+            qtrace!(
                 "Building {:?} dcid {} scid {}",
                 pt,
                 path.remote_cid(),
