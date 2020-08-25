@@ -386,6 +386,12 @@ impl Into<Vec<u8>> for Encoder {
     }
 }
 
+impl AsRef<[u8]> for Encoder {
+    fn as_ref(&self) -> &[u8] {
+        self.buf.as_ref()
+    }
+}
+
 impl Deref for Encoder {
     type Target = [u8];
     #[must_use]

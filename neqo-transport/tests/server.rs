@@ -547,7 +547,7 @@ fn retry_after_pto() {
     let mut now = now();
 
     let ci = client.process(None, now).dgram();
-    assert!(ci.is_some()); // sit on this for a bit.RefCell
+    assert!(ci.is_some()); // sit on this for a bit.
 
     // Let PTO fire on the client and then let it exhaust its PTO packets.
     now += Duration::from_secs(1);
@@ -563,6 +563,70 @@ fn retry_after_pto() {
 
     let ci2 = client.process(retry, now).dgram();
     assert!(ci2.unwrap().len() >= 1200);
+}
+
+/// We don't currently decode packets when sending a Retry.
+/// This makes this an anti-test, because although this results
+/// in the client sending a resumption token in a packet that
+/// should be rejected (it reuses packet number 0), the server
+/// doesn't detect this.
+#[test]
+fn reuse_pn_after_retry() {
+    let mut client = default_client();
+    let mut server = default_server();
+    server.set_validation(ValidateAddress::Always);
+
+    // Start out by getting a valid Retry token.
+    let ci = client.process(None, now()).dgram();
+    let retry = server.process(ci, now()).dgram();
+    let retry = retry.unwrap();
+    assertions::assert_retry(&retry[..]);
+
+    let mut retry_decoder = Decoder::from(&retry);
+    retry_decoder.skip(5); // First byte + version.
+    retry_decoder.skip_vec(1); // DCID
+    retry_decoder.skip_vec(1); // SCID
+    let retry_token = retry_decoder
+        .decode(retry_decoder.remaining() - 16)
+        .unwrap();
+
+    // Now get a resumption token and break that down.
+    // This depends heavily on knowing the format used by
+    // Connection::resumption_token and Connection::enable_resumption.
+    let ticket = get_ticket(&mut server);
+    let mut ticket_decoder = Decoder::from(&ticket);
+    let rtt = ticket_decoder.decode_varint().unwrap();
+    let tps = ticket_decoder.decode_vvec().unwrap(); // Transport parameters.
+    let ticket_token = ticket_decoder.decode_vvec().unwrap();
+    assert!(!ticket_token.is_empty());
+
+    // Build a new resumption token that uses the Retry token.
+    let mut franken_token = Encoder::new();
+    franken_token.encode_varint(rtt);
+    franken_token.encode_vvec(tps);
+    franken_token.encode_vvec(retry_token);
+    franken_token.encode(ticket_decoder.decode_remainder());
+
+    // A new client should accept the new resumption token as it can't know that
+    // it has a token from Retry.
+    let mut client = default_client();
+    client.enable_resumption(now(), &franken_token[..]).unwrap();
+
+    // The server could reject this connection attempt now, but it will not.
+    server.set_validation(ValidateAddress::Never);
+    let dgram = client.process(None, now()).dgram();
+    let dgram = server.process(dgram, now()).dgram();
+    let dgram = client.process(dgram, now()).dgram();
+    assert!(dgram.is_some()); // CONNECTION_CLOSE!
+
+    // The client should now detect that the server thinks that this is a Retry.
+    assert!(matches!(
+        client.state(),
+        State::Closing {
+            error: ConnectionError::Transport(Error::ProtocolViolation),
+            ..
+        }
+    ));
 }
 
 // Generate an AEAD and header protection object for a client Initial.

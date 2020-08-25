@@ -44,6 +44,12 @@ impl Deref for Datagram {
     }
 }
 
+impl AsRef<[u8]> for Datagram {
+    fn as_ref(&self) -> &[u8] {
+        self.d.as_ref()
+    }
+}
+
 impl std::fmt::Debug for Datagram {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
