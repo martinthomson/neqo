@@ -102,7 +102,7 @@ fn nss_dir() -> PathBuf {
         let dir = Path::new(&out_dir).join("nss");
         if !dir.exists() {
             Command::new("hg")
-                .args(&[
+                .args([
                     "clone",
                     "https://hg.mozilla.org/projects/nss",
                     dir.to_str().unwrap(),
