@@ -8,7 +8,7 @@
 
 use crate::{Error, MessageType, Res};
 use enumset::{enum_set, EnumSet, EnumSetType};
-use neqo_common::Header;
+use neqo_common::{qwarn, Header};
 use std::convert::TryFrom;
 
 #[derive(EnumSetType, Debug)]
@@ -106,6 +106,7 @@ pub fn headers_valid(headers: &[Header], message_type: MessageType) -> Res<()> {
         }
 
         if bytes.any(|b| matches!(b, 0 | 0x10 | 0x13 | 0x3a | 0x41..=0x5a)) {
+            qwarn!("Invalid character in {}", header.name());
             return Err(Error::InvalidHeader); // illegal characters.
         }
     }
@@ -122,14 +123,16 @@ pub fn headers_valid(headers: &[Header], message_type: MessageType) -> Res<()> {
         }
     };
 
-    if (MessageType::Request == message_type)
+    if MessageType::Request == message_type
         && pseudo_state.contains(PseudoHeaderState::Protocol)
         && method_value != Some("CONNECT")
     {
+        qwarn!("Found :protocol without CONNECT");
         return Err(Error::InvalidHeader);
     }
 
     if pseudo_state & pseudo_header_mask != pseudo_header_mask {
+        qwarn!("invalid set of pseudo-headers");
         return Err(Error::InvalidHeader);
     }
 

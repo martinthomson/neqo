@@ -91,7 +91,7 @@ impl Display for ServerError {
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "neqo-server", about = "A basic HTTP3 server.")]
-struct Args {
+pub struct Args {
     /// List of IP:port to listen on
     #[structopt(default_value = "[::]:4433")]
     hosts: Vec<String>,
@@ -333,8 +333,9 @@ fn qns_read_response(filename: &str) -> Option<Vec<u8>> {
 }
 
 trait HttpServer: Display {
+    fn args(&self) -> &Args;
     fn process(&mut self, dgram: Option<Datagram>, now: Instant) -> Output;
-    fn process_events(&mut self, args: &Args, now: Instant);
+    fn process_events(&mut self, now: Instant);
     fn set_qlog_dir(&mut self, dir: Option<PathBuf>);
     fn set_ciphers(&mut self, ciphers: &[Cipher]);
     fn validate_address(&mut self, when: ValidateAddress);
@@ -399,6 +400,9 @@ impl ResponseData {
 }
 
 struct SimpleServer {
+    /// Program arguments.
+    args: Args,
+    /// The real server instance.
     server: Http3Server,
     /// Progress writing to each stream.
     remaining_data: HashMap<StreamId, ResponseData>,
@@ -415,7 +419,7 @@ impl SimpleServer {
         With many cheerful facts about the square of the hypotenuse.\n";
 
     pub fn new(
-        args: &Args,
+        args: Args,
         anti_replay: AntiReplay,
         cid_mgr: Rc<RefCell<dyn ConnectionIdGenerator>>,
     ) -> Self {
@@ -434,8 +438,31 @@ impl SimpleServer {
         )
         .expect("We cannot make a server!");
         Self {
+            args,
             server,
             remaining_data: HashMap::new(),
+        }
+    }
+
+    fn serve(&self, path: &Header, response_headers: &mut Vec<Header>) -> ResponseData {
+        if let Some(target) = path.value().strip_prefix("/redirect/") {
+            response_headers.push(Header::new(":status", "302"));
+            let location = String::from("/") + target;
+            response_headers.push(Header::new("location", location));
+            ResponseData::from(&[][..])
+        } else {
+            response_headers.push(Header::new(":status", "200"));
+            if self.args.qns_test.is_some() {
+                if let Some(data) = qns_read_response(path.value()) {
+                    ResponseData::from(data)
+                } else {
+                    ResponseData::from(Self::MESSAGE)
+                }
+            } else if let Ok(count) = path.value().trim_matches(|p| p == '/').parse::<usize>() {
+                ResponseData::repeat(Self::MESSAGE, count)
+            } else {
+                ResponseData::from(Self::MESSAGE)
+            }
         }
     }
 }
@@ -447,11 +474,15 @@ impl Display for SimpleServer {
 }
 
 impl HttpServer for SimpleServer {
+    fn args(&self) -> &Args {
+        &self.args
+    }
+
     fn process(&mut self, dgram: Option<Datagram>, now: Instant) -> Output {
         self.server.process(dgram, now)
     }
 
-    fn process_events(&mut self, args: &Args, _now: Instant) {
+    fn process_events(&mut self, _now: Instant) {
         while let Some(event) = self.server.next_event() {
             match event {
                 Http3ServerEvent::Headers {
@@ -461,21 +492,10 @@ impl HttpServer for SimpleServer {
                 } => {
                     println!("Headers (request={} fin={}): {:?}", stream, fin, headers);
 
+                    let mut response_headers = Vec::new();
                     let mut response =
                         if let Some(path) = headers.iter().find(|&h| h.name() == ":path") {
-                            if args.qns_test.is_some() {
-                                if let Some(data) = qns_read_response(path.value()) {
-                                    ResponseData::from(data)
-                                } else {
-                                    ResponseData::from(Self::MESSAGE)
-                                }
-                            } else if let Ok(count) =
-                                path.value().trim_matches(|p| p == '/').parse::<usize>()
-                            {
-                                ResponseData::repeat(Self::MESSAGE, count)
-                            } else {
-                                ResponseData::from(Self::MESSAGE)
-                            }
+                            self.serve(path, &mut response_headers)
                         } else {
                             stream
                                 .cancel_fetch(Error::HttpRequestIncomplete.code())
@@ -483,12 +503,8 @@ impl HttpServer for SimpleServer {
                             continue;
                         };
 
-                    stream
-                        .send_headers(&[
-                            Header::new(":status", "200"),
-                            Header::new("content-length", response.remaining),
-                        ])
-                        .unwrap();
+                    response_headers.push(Header::new("content-length", response.remaining));
+                    stream.send_headers(&response_headers).unwrap();
                     response.send(&mut stream);
                     if response.done() {
                         stream.stream_close_send().unwrap();
@@ -562,7 +578,6 @@ fn read_dgram(
 }
 
 struct ServersRunner {
-    args: Args,
     poll: Poll,
     hosts: Vec<SocketAddr>,
     server: Box<dyn HttpServer>,
@@ -574,9 +589,8 @@ struct ServersRunner {
 
 impl ServersRunner {
     pub fn new(args: Args) -> Result<Self, io::Error> {
-        let server = Self::create_server(&args);
+        let server = Self::create_server(args);
         let mut runner = Self {
-            args,
             poll: Poll::new()?,
             hosts: Vec::new(),
             server,
@@ -591,10 +605,14 @@ impl ServersRunner {
         Ok(runner)
     }
 
+    fn args(&self) -> &Args {
+        self.server.args()
+    }
+
     /// Init Poll for all hosts. Create sockets, and a map of the
     /// socketaddrs to instances of the HttpServer handling that addr.
     fn init(&mut self) -> Result<(), io::Error> {
-        self.hosts = self.args.listen_addresses();
+        self.hosts = self.args().listen_addresses();
         if self.hosts.is_empty() {
             eprintln!("No valid hosts defined");
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "No hosts"));
@@ -643,33 +661,29 @@ impl ServersRunner {
         Ok(())
     }
 
-    fn create_server(args: &Args) -> Box<dyn HttpServer> {
+    fn create_server(args: Args) -> Box<dyn HttpServer> {
         // Note: this is the exception to the case where we use `Args::now`.
         let anti_replay = AntiReplay::new(Instant::now(), ANTI_REPLAY_WINDOW, 7, 14)
             .expect("unable to setup anti-replay");
         let cid_mgr = Rc::new(RefCell::new(RandomConnectionIdGenerator::new(10)));
 
         let mut svr: Box<dyn HttpServer> = if args.use_old_http {
+            let key = args.key.clone();
+            let alpn = args.alpn.clone();
+            let conn_params = args.quic_parameters.get();
             Box::new(
-                Http09Server::new(
-                    args.now(),
-                    &[args.key.clone()],
-                    &[args.alpn.clone()],
-                    anti_replay,
-                    cid_mgr,
-                    args.quic_parameters.get(),
-                )
-                .expect("We cannot make a server!"),
+                Http09Server::new(args, &[key], &[alpn], anti_replay, cid_mgr, conn_params)
+                    .expect("We cannot make a server!"),
             )
         } else {
             Box::new(SimpleServer::new(args, anti_replay, cid_mgr))
         };
-        svr.set_ciphers(&args.get_ciphers());
-        svr.set_qlog_dir(args.qlog_dir.clone());
-        if args.retry {
+        svr.set_ciphers(&svr.args().get_ciphers());
+        svr.set_qlog_dir(svr.args().qlog_dir.clone());
+        if svr.args().retry {
             svr.validate_address(ValidateAddress::Always);
         }
-        if args.ech {
+        if svr.args().ech {
             let cfg = svr.enable_ech();
             println!("ECHConfigList: {}", hex(cfg));
         }
@@ -689,7 +703,7 @@ impl ServersRunner {
     }
 
     fn process(&mut self, inx: usize, dgram: Option<Datagram>) -> bool {
-        match self.server.process(dgram, self.args.now()) {
+        match self.server.process(dgram, self.args().now()) {
             Output::Datagram(dgram) => {
                 let socket = self.find_socket(dgram.source());
                 emit_packet(socket, dgram);
@@ -729,7 +743,7 @@ impl ServersRunner {
             } else {
                 let _ = self.process(inx, None);
             }
-            self.server.process_events(&self.args, self.args.now());
+            self.server.process_events(self.args().now());
             if self.process(inx, None) {
                 self.active_sockets.insert(inx);
             }

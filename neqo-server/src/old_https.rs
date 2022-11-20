@@ -33,6 +33,7 @@ struct Http09StreamState {
 }
 
 pub struct Http09Server {
+    args: Args,
     server: Server,
     write_state: HashMap<StreamId, Http09StreamState>,
     read_state: HashMap<StreamId, Vec<u8>>,
@@ -40,14 +41,16 @@ pub struct Http09Server {
 
 impl Http09Server {
     pub fn new(
-        now: Instant,
+        args: Args,
         certs: &[impl AsRef<str>],
         protocols: &[impl AsRef<str>],
         anti_replay: AntiReplay,
         cid_manager: Rc<RefCell<dyn ConnectionIdGenerator>>,
         conn_params: ConnectionParameters,
     ) -> Result<Self, Error> {
+        let now = args.now();
         Ok(Self {
+            args,
             server: Server::new(
                 now,
                 certs,
@@ -107,12 +110,7 @@ impl Http09Server {
         }
     }
 
-    fn stream_readable(
-        &mut self,
-        stream_id: StreamId,
-        conn: &mut ActiveConnectionRef,
-        args: &Args,
-    ) {
+    fn stream_readable(&mut self, stream_id: StreamId, conn: &mut ActiveConnectionRef) {
         if !stream_id.is_client_initiated() || !stream_id.is_bidi() {
             qdebug!("Stream {} not client-initiated bidi, ignoring", stream_id);
             return;
@@ -145,7 +143,7 @@ impl Http09Server {
             return;
         };
 
-        let re = if args.qns_test.is_some() {
+        let re = if self.args.qns_test.is_some() {
             Regex::new(r"GET +/(\S+)(?:\r)?\n").unwrap()
         } else {
             Regex::new(r"GET +/(\d+)(?:\r)?\n").unwrap()
@@ -159,7 +157,7 @@ impl Http09Server {
             Some(path) => {
                 let path = path.as_str();
                 eprintln!("Path = '{}'", path);
-                if args.qns_test.is_some() {
+                if self.args.qns_test.is_some() {
                     qns_read_response(path)
                 } else {
                     let count = path.parse().unwrap();
@@ -199,11 +197,15 @@ impl Http09Server {
 }
 
 impl HttpServer for Http09Server {
+    fn args(&self) -> &Args {
+        &self.args
+    }
+
     fn process(&mut self, dgram: Option<Datagram>, now: Instant) -> Output {
         self.server.process(dgram, now)
     }
 
-    fn process_events(&mut self, args: &Args, now: Instant) {
+    fn process_events(&mut self, now: Instant) {
         let active_conns = self.server.active_connections();
         for mut acr in active_conns {
             loop {
@@ -218,7 +220,7 @@ impl HttpServer for Http09Server {
                             .insert(stream_id, Http09StreamState::default());
                     }
                     ConnectionEvent::RecvStreamReadable { stream_id } => {
-                        self.stream_readable(stream_id, &mut acr, args);
+                        self.stream_readable(stream_id, &mut acr);
                     }
                     ConnectionEvent::SendStreamWritable { stream_id } => {
                         self.stream_writable(stream_id, &mut acr);
