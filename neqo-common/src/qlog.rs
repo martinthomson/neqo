@@ -8,9 +8,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::SystemTime;
 
-use chrono::{DateTime, Utc};
 use qlog::{
     self, CommonFields, Configuration, QlogStreamer, TimeUnits, Trace, VantagePoint,
     VantagePointType,
@@ -122,9 +120,10 @@ pub fn new_trace(role: Role) -> qlog::Trace {
             group_id: None,
             protocol_type: None,
             reference_time: Some({
-                let system_time = SystemTime::now();
-                let datetime: DateTime<Utc> = system_time.into();
-                datetime.to_rfc3339()
+                let datetime = time::OffsetDateTime::now_utc();
+                datetime
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap()
             }),
         }),
         event_fields: vec![
