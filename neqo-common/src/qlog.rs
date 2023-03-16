@@ -98,6 +98,9 @@ impl Drop for NeqoQlogShared {
     }
 }
 
+/// Generate a new QLOG trace.
+/// # Panics
+/// If we can't format the time.
 #[must_use]
 pub fn new_trace(role: Role) -> qlog::Trace {
     Trace {
