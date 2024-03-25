@@ -1450,7 +1450,7 @@ impl Connection {
         );
         path.borrow_mut().add_received(d.len());
         let res = self.input_path(&path, d, received);
-        self.capture_error(Some(path), now, 0, res).ok();
+        _ = self.capture_error(Some(path), now, 0, res);
     }
 
     fn input_path(&mut self, path: &PathRef, d: &Datagram, now: Instant) -> Res<()> {
