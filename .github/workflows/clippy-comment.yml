@@ -1,0 +1,56 @@
+# Post clippy diagnostics as inline PR review comments with suggestion blocks.
+#
+# Runs as a `workflow_run` handler so it can be granted `pull-requests: write`
+# without that permission ever being available to the untrusted upstream
+# `Clippy` workflow. The Python script that does the work is checked out
+# from the repo's default branch (the default ref for `workflow_run` events),
+# so PR-head code can never influence what runs here — only the artifact
+# contents (raw clippy JSON + PR number + workspace path) come from the
+# untrusted upstream and are treated as data.
+
+name: Clippy PR review
+on:
+  workflow_run:
+    workflows: ["Clippy"]
+    types:
+      - completed # zizmor: ignore[dangerous-triggers]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  comment:
+    name: Post review
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    if: |
+      github.event.workflow_run.event == 'pull_request' &&
+      (github.event.workflow_run.conclusion == 'success' ||
+       github.event.workflow_run.conclusion == 'failure')
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          name: clippy-pr-review
+          path: clippy-pr-review
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post clippy review
+        if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 .github/scripts/clippy-pr-review.py clippy-pr-review
