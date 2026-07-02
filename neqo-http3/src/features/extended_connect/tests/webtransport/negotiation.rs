@@ -104,13 +104,13 @@ fn zero_rtt_wt_settings() {
         client_resumed_state: ClientConfig,
         server_resumed_state: ServerConfig,
     ) {
-        let client_org = client_state.enabled();
-        let server_org = server_state.enabled();
+        let client_orig = client_state.enabled();
+        let server_orig = server_state.enabled();
         let client_resumed = client_resumed_state.enabled();
         let server_resumed = server_resumed_state.enabled();
 
-        let (mut client, mut server) = connect_wt(client_org, server_org);
-        assert_eq!(client.webtransport_enabled(), client_org && server_org);
+        let (mut client, mut server) = connect_wt(client_orig, server_orig);
+        assert_eq!(client.webtransport_enabled(), client_orig && server_orig);
 
         // exchange token
         let out = server.process_output(now());
@@ -147,7 +147,7 @@ fn zero_rtt_wt_settings() {
 
         // The only case we should not do 0-RTT is when webtransport was enabled
         // originally and is disabled afterwards.
-        let early_data_accepted = !server_org || server_resumed;
+        let early_data_accepted = !server_orig || server_resumed;
         assert_eq!(
             client.tls_info().unwrap().early_data_accepted(),
             early_data_accepted
