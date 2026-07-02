@@ -60,175 +60,111 @@ fn negotiate_wt() {
     check_wt_event(&mut client, false, false);
 }
 
-#[derive(PartialEq, Eq)]
-enum ClientState {
-    ClientEnabled,
-    ClientDisabled,
-}
-
-#[derive(PartialEq, Eq)]
-enum ServerState {
-    ServerEnabled,
-    ServerDisabled,
-}
-
-fn zero_rtt(
-    client_state: &ClientState,
-    server_state: &ServerState,
-    client_resumed_state: &ClientState,
-    server_resumed_state: &ServerState,
-) {
-    let client_org = ClientState::ClientEnabled.eq(client_state);
-    let server_org = ServerState::ServerEnabled.eq(server_state);
-    let client_resumed = ClientState::ClientEnabled.eq(client_resumed_state);
-    let server_resumed = ServerState::ServerEnabled.eq(server_resumed_state);
-
-    let (mut client, mut server) = connect_wt(client_org, server_org);
-    assert_eq!(client.webtransport_enabled(), client_org && server_org);
-
-    // exchange token
-    let out = server.process_output(now());
-    // We do not have a token so we need to wait for a resumption token timer to trigger.
-    drop(client.process(out.dgram(), now() + Duration::from_millis(250)));
-    assert_eq!(client.state(), Http3State::Connected);
-    let token = client
-        .events()
-        .find_map(|e| {
-            if let Http3ClientEvent::ResumptionToken(token) = e {
-                Some(token)
-            } else {
-                None
-            }
-        })
-        .unwrap();
-
-    let mut client = default_http3_client(Http3Parameters::default().webtransport(client_resumed));
-    let mut server = default_http3_server(Http3Parameters::default().webtransport(server_resumed));
-    client
-        .enable_resumption(now(), &token)
-        .expect("Set resumption token");
-    assert_eq!(client.state(), Http3State::ZeroRtt);
-
-    exchange_packets(&mut client, &mut server);
-
-    assert_eq!(&client.state(), &Http3State::Connected);
-    assert_eq!(
-        client.webtransport_enabled(),
-        client_resumed && server_resumed
-    );
-
-    // The only case we should not do 0-RTT is when webtransport was enabled
-    // originally and is disabled afterwards.
-    let early_data_accepted = !server_org || server_resumed;
-    assert_eq!(
-        client.tls_info().unwrap().early_data_accepted(),
-        early_data_accepted
-    );
-
-    check_wt_event(&mut client, client_resumed, server_resumed);
-}
-
 #[test]
 fn zero_rtt_wt_settings() {
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-    );
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-    );
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-    );
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-    );
+    #[derive(PartialEq, Eq, Clone, Copy)]
+    enum ClientConfig {
+        Enabled,
+        Disabled,
+    }
 
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-    );
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-    );
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-    );
-    zero_rtt(
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-    );
+    impl ClientConfig {
+        fn enabled(self) -> bool {
+            self == Self::Enabled
+        }
+    }
 
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-    );
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-    );
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-    );
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-    );
+    impl From<bool> for ClientConfig {
+        fn from(v: bool) -> Self {
+            if v { Self::Enabled } else { Self::Disabled }
+        }
+    }
 
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-    );
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientDisabled,
-        &ServerState::ServerDisabled,
-    );
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerDisabled,
-    );
-    zero_rtt(
-        &ClientState::ClientDisabled,
-        &ServerState::ServerEnabled,
-        &ClientState::ClientEnabled,
-        &ServerState::ServerEnabled,
-    );
+    #[derive(PartialEq, Eq, Clone, Copy)]
+    enum ServerConfig {
+        Enabled,
+        Disabled,
+    }
+
+    impl ServerConfig {
+        fn enabled(self) -> bool {
+            self == Self::Enabled
+        }
+    }
+
+    impl From<bool> for ServerConfig {
+        fn from(v: bool) -> Self {
+            if v { Self::Enabled } else { Self::Disabled }
+        }
+    }
+
+    fn zero_rtt(
+        client_state: ClientConfig,
+        server_state: ServerConfig,
+        client_resumed_state: ClientConfig,
+        server_resumed_state: ServerConfig,
+    ) {
+        let client_org = client_state.enabled();
+        let server_org = server_state.enabled();
+        let client_resumed = client_resumed_state.enabled();
+        let server_resumed = server_resumed_state.enabled();
+
+        let (mut client, mut server) = connect_wt(client_org, server_org);
+        assert_eq!(client.webtransport_enabled(), client_org && server_org);
+
+        // exchange token
+        let out = server.process_output(now());
+        // We do not have a token so we need to wait for a resumption token timer to trigger.
+        drop(client.process(out.dgram(), now() + Duration::from_millis(250)));
+        assert_eq!(client.state(), Http3State::Connected);
+        let token = client
+            .events()
+            .find_map(|e| {
+                if let Http3ClientEvent::ResumptionToken(token) = e {
+                    Some(token)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        let mut client =
+            default_http3_client(Http3Parameters::default().webtransport(client_resumed));
+        let mut server =
+            default_http3_server(Http3Parameters::default().webtransport(server_resumed));
+        client
+            .enable_resumption(now(), &token)
+            .expect("Set resumption token");
+        assert_eq!(client.state(), Http3State::ZeroRtt);
+
+        exchange_packets(&mut client, &mut server);
+
+        assert_eq!(&client.state(), &Http3State::Connected);
+        assert_eq!(
+            client.webtransport_enabled(),
+            client_resumed && server_resumed
+        );
+
+        // The only case we should not do 0-RTT is when webtransport was enabled
+        // originally and is disabled afterwards.
+        let early_data_accepted = !server_org || server_resumed;
+        assert_eq!(
+            client.tls_info().unwrap().early_data_accepted(),
+            early_data_accepted
+        );
+
+        check_wt_event(&mut client, client_resumed, server_resumed);
+    }
+
+    // We have four options to configure, so go through each.
+    for i in 0..16 {
+        zero_rtt(
+            ClientConfig::from(i & 0x1 != 0),
+            ServerConfig::from(i & 0x2 != 0),
+            ClientConfig::from(i & 0x4 != 0),
+            ServerConfig::from(i & 0x8 != 0),
+        );
+    }
 }
 
 fn exchange_packets2(client: &mut Http3Client, server: &mut Connection) {
