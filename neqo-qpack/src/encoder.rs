@@ -11,7 +11,7 @@ use std::{
     time::Instant,
 };
 
-use neqo_common::{Header, qdebug, qerror, qlog::Qlog, qtrace};
+use neqo_common::{Header, qdebug, qlog::Qlog, qtrace};
 use neqo_transport::{Connection, Error as TransportError, StreamId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
@@ -352,8 +352,8 @@ impl Encoder {
     pub fn send_encoder_updates(&mut self, conn: &mut Connection) -> Res<()> {
         match self.local_stream {
             LocalStreamState::NoStream => {
-                qerror!("Send call but there is no stream yet");
-                Ok(())
+                debug_assert!(false, "Send call but there is no stream yet");
+                Err(Error::Internal)
             }
             LocalStreamState::Uninitialized(stream_id) => {
                 let mut buf = neqo_common::Encoder::default();
